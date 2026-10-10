@@ -1,0 +1,11 @@
+{
+  "name": "aquagen-backend",
+  "version": "1.0.0",
+  "description": "AquaGen AWS Serverless Lambda Handlers",
+  "type": "module",
+  "main": "handlers/health.js",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.600.0",
+    "@aws-sdk/lib-dynamodb": "^3.600.0"
+  }
+}

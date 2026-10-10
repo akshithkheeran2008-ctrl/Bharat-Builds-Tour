@@ -1,0 +1,243 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  AquaGen: The Water Black Box
+  Serverless REST API, DynamoDB data persistence, and mass-conservation calculation engine.
+
+Globals:
+  Function:
+    Timeout: 10
+    MemorySize: 256
+    Runtime: nodejs20.x
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        ZONES_TABLE: !Ref AquaGenZonesTable
+        READINGS_TABLE: !Ref AquaGenReadingsTable
+        INVESTIGATIONS_TABLE: !Ref AquaGenInvestigationsTable
+  Api:
+    Cors:
+      AllowMethods: "'OPTIONS,GET,POST,PATCH,PUT,DELETE'"
+      AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+      AllowOrigin: "'*'"
+
+Resources:
+  # =========================================================================
+  # DynamoDB Tables (On-Demand / Pay-Per-Request - Zero Idle Cost)
+  # =========================================================================
+  AquaGenZonesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: AquaGenZones
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  AquaGenReadingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: AquaGenReadings
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: zoneId
+          AttributeType: S
+        - AttributeName: date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: zoneId
+          KeyType: HASH
+        - AttributeName: date
+          KeyType: RANGE
+
+  AquaGenInvestigationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: AquaGenInvestigations
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: zoneId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: ZoneIndex
+          KeySchema:
+            - AttributeName: zoneId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  # =========================================================================
+  # API Gateway REST API
+  # =========================================================================
+  AquaGenApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      TracingEnabled: true
+
+  # =========================================================================
+  # Lambda Microservice Functions
+  # =========================================================================
+  HealthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/src/
+      Handler: handlers/health.handler
+      Events:
+        HealthCheck:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AquaGenApi
+            Path: /health
+            Method: GET
+
+  ZonesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/src/
+      Handler: handlers/zones.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AquaGenZonesTable
+      Events:
+        GetZones:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AquaGenApi
+            Path: /zones
+            Method: GET
+        GetZoneById:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AquaGenApi
+            Path: /zones/{zoneId}
+            Method: GET
+
+  ReadingsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/src/
+      Handler: handlers/readings.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AquaGenReadingsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AquaGenInvestigationsTable
+      Events:
+        GetReadings:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AquaGenApi
+            Path: /readings
+            Method: GET
+        PostReading:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AquaGenApi
+            Path: /readings
+            Method: POST
+
+  CalculateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/src/
+      Handler: handlers/calculate.handler
+      Events:
+        PostCalculate:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AquaGenApi
+            Path: /readings/calculate
+            Method: POST
+
+  InvestigationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/src/
+      Handler: handlers/investigations.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AquaGenInvestigationsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref AquaGenReadingsTable
+      Events:
+        GetInvestigations:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AquaGenApi
+            Path: /investigations
+            Method: GET
+        PostInvestigation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AquaGenApi
+            Path: /investigations
+            Method: POST
+        GetInvestigationById:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AquaGenApi
+            Path: /investigations/{investigationId}
+            Method: GET
+        PatchInvestigation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AquaGenApi
+            Path: /investigations/{investigationId}
+            Method: PATCH
+        PostInspection:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AquaGenApi
+            Path: /investigations/{investigationId}/inspections
+            Method: POST
+        PostVerifyComparison:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AquaGenApi
+            Path: /investigations/{investigationId}/verify-comparison
+            Method: POST
+
+  AnalyticsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/src/
+      Handler: handlers/analytics.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref AquaGenReadingsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref AquaGenInvestigationsTable
+      Events:
+        GetSummary:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AquaGenApi
+            Path: /analytics/summary
+            Method: GET
+
+# =========================================================================
+# CloudFormation Outputs
+# =========================================================================
+Outputs:
+  ApiEndpoint:
+    Description: "API Gateway endpoint URL for Prod stage"
+    Value: !Sub "https://${AquaGenApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+  AquaGenZonesTable:
+    Description: "DynamoDB table name for Water Supply Zones"
+    Value: !Ref AquaGenZonesTable
+  AquaGenReadingsTable:
+    Description: "DynamoDB table name for Daily Water Readings"
+    Value: !Ref AquaGenReadingsTable
+  AquaGenInvestigationsTable:
+    Description: "DynamoDB table name for Discrepancy Investigations"
+    Value: !Ref AquaGenInvestigationsTable
